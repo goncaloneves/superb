@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Polymarket 5-Min Strike Price</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, system-ui, sans-serif; background: #0a0a0a; color: #e0e0e0; padding: 16px; }
+  h1 { font-size: 1.3em; margin-bottom: 12px; color: #fff; }
+  .card { background: #1a1a2e; border-radius: 12px; padding: 16px; margin-bottom: 12px; border: 1px solid #2a2a4a; }
+  .card h2 { font-size: 1em; color: #8888ff; margin-bottom: 8px; }
+  .strike { font-size: 2em; font-weight: bold; color: #00ff88; }
+  .meta { font-size: 0.85em; color: #888; margin-top: 6px; }
+  .btn { background: #3344ff; color: #fff; border: none; border-radius: 8px; padding: 12px 24px; font-size: 1em; cursor: pointer; width: 100%; margin-bottom: 16px; }
+  .btn:active { background: #2233cc; }
+  .btn:disabled { background: #333; color: #666; }
+  .status { padding: 8px; font-size: 0.9em; color: #aaa; }
+  .error { color: #ff4444; }
+  .raw { background: #111; border-radius: 8px; padding: 12px; margin-top: 8px; font-size: 0.75em; overflow-x: auto; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; color: #aaa; }
+  .section { margin-top: 16px; }
+  .section h3 { font-size: 0.95em; color: #aaa; margin-bottom: 8px; }
+  .tag { display: inline-block; background: #2a2a4a; border-radius: 4px; padding: 2px 8px; font-size: 0.8em; margin: 2px; }
+</style>
+</head>
+<body>
+
+<h1>Polymarket 5-Min Crypto Strike Price</h1>
+<button class="btn" id="fetchBtn" onclick="fetchAll()">Fetch Active Markets</button>
+<div id="status" class="status"></div>
+<div id="results"></div>
+
+<div class="section">
+  <h3>Raw API Responses</h3>
+  <div id="rawLog" class="raw">Waiting...</div>
+</div>
+
+<script>
+const GAMMA = 'https://gamma-api.polymarket.com';
+const log = [];
+
+function addLog(msg) {
+  log.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
+  document.getElementById('rawLog').textContent = log.join('\n');
+}
+
+function setStatus(msg, isError) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = isError ? 'status error' : 'status';
+}
+
+async function fetchJSON(url) {
+  addLog(`GET ${url}`);
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const data = await resp.json();
+  return data;
+}
+
+function parseTemplateVars(tv) {
+  if (!tv) return null;
+  if (typeof tv === 'string') {
+    try { return JSON.parse(tv); } catch(e) { return tv; }
+  }
+  return tv;
+}
+
+function findStrikeInTV(tv) {
+  if (!tv) return null;
+  const parsed = parseTemplateVars(tv);
+  if (!parsed || typeof parsed !== 'object') return null;
+  // Look for common strike price field names
+  const keys = ['strikePrice', 'strike_price', 'strike', 'openPrice', 'open_price',
+                'openingPrice', 'startPrice', 'start_price', 'priceToBeat', 'price_to_beat',
+                'price', 'referencePrice', 'reference_price', 'anchorPrice', 'anchor_price'];
+  for (const k of keys) {
+    if (parsed[k] !== undefined) return { key: k, value: parsed[k], all: parsed };
+  }
+  return { key: null, value: null, all: parsed };
+}
+
+function renderMarket(market, parentTitle) {
+  const card = document.createElement('div');
+  card.className = 'card';
+
+  const question = market.question || market.title || 'Unknown';
+  const slug = market.slug || '';
+  const tv = market.templateVariables;
+  const parsedTV = parseTemplateVars(tv);
+  const strikeInfo = findStrikeInTV(tv);
+  const desc = market.description || '';
+  const start = market.startDate || market.startDateIso || '';
+  const end = market.endDate || market.endDateIso || '';
+  const prices = market.outcomePrices;
+
+  let html = `<h2>${question}</h2>`;
+
+  if (strikeInfo && strikeInfo.value !== null) {
+    html += `<div class="strike">$${Number(strikeInfo.value).toLocaleString(undefined, {minimumFractionDigits: 2})}</div>`;
+    html += `<div class="meta">Field: ${strikeInfo.key}</div>`;
+  } else if (parsedTV && typeof parsedTV === 'object') {
+    // Show all templateVariables - the strike might be under a different name
+    html += `<div class="strike" style="font-size:1.2em;color:#ffaa00;">templateVariables found (check below)</div>`;
+  }
+
+  if (parsedTV) {
+    html += `<div class="meta" style="margin-top:8px;"><b>templateVariables:</b></div>`;
+    html += `<div class="raw" style="max-height:150px;">${JSON.stringify(parsedTV, null, 2)}</div>`;
+  }
+
+  if (desc) {
+    // Check if description contains a dollar amount (could be the strike)
+    const priceMatch = desc.match(/\$[\d,]+\.?\d*/g);
+    if (priceMatch) {
+      html += `<div class="meta" style="color:#ffaa00;">Prices in description: ${priceMatch.join(', ')}</div>`;
+    }
+  }
+
+  html += `<div class="meta">Slug: ${slug}</div>`;
+  if (start) html += `<div class="meta">Start: ${new Date(start).toLocaleString()}</div>`;
+  if (end) html += `<div class="meta">End: ${new Date(end).toLocaleString()}</div>`;
+  if (prices) html += `<div class="meta">Outcome Prices: ${typeof prices === 'string' ? prices : JSON.stringify(prices)}</div>`;
+  if (parentTitle) html += `<div class="meta">Event: ${parentTitle}</div>`;
+
+  card.innerHTML = html;
+  return card;
+}
+
+async function fetchAll() {
+  const btn = document.getElementById('fetchBtn');
+  const results = document.getElementById('results');
+  btn.disabled = true;
+  btn.textContent = 'Fetching...';
+  results.innerHTML = '';
+  log.length = 0;
+
+  try {
+    // Strategy 1: Search events for 5-min crypto markets
+    setStatus('Fetching active crypto events...');
+
+    const searches = [
+      // Try multiple approaches in parallel
+      fetchJSON(`${GAMMA}/events?active=true&closed=false&limit=50&tag=crypto`).catch(e => { addLog(`Events crypto: ${e.message}`); return []; }),
+      fetchJSON(`${GAMMA}/events?active=true&closed=false&limit=50&slug_contains=5m`).catch(e => { addLog(`Events 5m slug: ${e.message}`); return []; }),
+      fetchJSON(`${GAMMA}/events?active=true&closed=false&limit=50&title=Bitcoin+5-minute`).catch(e => { addLog(`Events title: ${e.message}`); return []; }),
+      fetchJSON(`${GAMMA}/markets?active=true&closed=false&limit=50&slug_contains=btc-updown-5m`).catch(e => { addLog(`Markets btc-5m: ${e.message}`); return []; }),
+      fetchJSON(`${GAMMA}/markets?active=true&closed=false&limit=50&slug_contains=5m`).catch(e => { addLog(`Markets 5m: ${e.message}`); return []; }),
+    ];
+
+    const [evCrypto, ev5m, evTitle, mktBtc5m, mkt5m] = await Promise.all(searches);
+
+    addLog(`Events crypto: ${evCrypto.length}, Events 5m: ${ev5m.length}, Events title: ${evTitle.length}`);
+    addLog(`Markets btc-5m: ${mktBtc5m.length}, Markets 5m: ${mkt5m.length}`);
+
+    // Collect all 5-min markets
+    const seen = new Set();
+    const fiveMinMarkets = [];
+
+    function check5min(text) {
+      const t = (text || '').toLowerCase();
+      return (t.includes('5-min') || t.includes('5 min') || t.includes('-5m-') || t.includes('_5m_') || t.includes('five min'));
+    }
+
+    function checkCrypto(text) {
+      const t = (text || '').toLowerCase();
+      return (t.includes('btc') || t.includes('bitcoin') || t.includes('eth') || t.includes('ethereum') || t.includes('sol') || t.includes('crypto'));
+    }
+
+    // Process events
+    for (const events of [evCrypto, ev5m, evTitle]) {
+      if (!Array.isArray(events)) continue;
+      for (const event of events) {
+        const title = event.title || '';
+        const slug = event.slug || '';
+        const combined = `${title} ${slug}`;
+
+        if (check5min(combined)) {
+          addLog(`Found 5-min event: ${title} (slug: ${slug})`);
+          addLog(`Event templateVariables: ${JSON.stringify(event.templateVariables)}`);
+
+          // Add nested markets
+          const markets = event.markets || [];
+          for (const m of markets) {
+            if (!seen.has(m.id)) {
+              seen.add(m.id);
+              fiveMinMarkets.push({ market: m, eventTitle: title, eventTV: event.templateVariables });
+            }
+          }
+
+          // If event has templateVariables but no markets, show it as-is
+          if (markets.length === 0 && event.templateVariables) {
+            fiveMinMarkets.push({ market: event, eventTitle: title, eventTV: event.templateVariables });
+          }
+        }
+      }
+    }
+
+    // Process direct market results
+    for (const markets of [mktBtc5m, mkt5m]) {
+      if (!Array.isArray(markets)) continue;
+      for (const m of markets) {
+        const q = m.question || '';
+        const slug = m.slug || '';
+        const combined = `${q} ${slug}`;
+        if (check5min(combined) && !seen.has(m.id)) {
+          seen.add(m.id);
+          addLog(`Found 5-min market: ${q} (slug: ${slug})`);
+          addLog(`Market templateVariables: ${JSON.stringify(m.templateVariables)}`);
+          fiveMinMarkets.push({ market: m, eventTitle: null, eventTV: null });
+        }
+      }
+    }
+
+    setStatus(`Found ${fiveMinMarkets.length} 5-min market(s)`);
+
+    if (fiveMinMarkets.length === 0) {
+      // Broader search: dump everything and let user see what's there
+      setStatus('No 5-min markets found with filters. Trying broader search...', false);
+
+      const broader = await fetchJSON(`${GAMMA}/events?active=true&closed=false&limit=20&order=startDate&ascending=false`).catch(e => []);
+      addLog(`Broader search returned ${broader.length} events`);
+
+      let foundAny = false;
+      for (const event of broader) {
+        const title = event.title || '';
+        const slug = event.slug || '';
+        addLog(`Event: "${title}" slug="${slug}" TV=${JSON.stringify(event.templateVariables)}`);
+
+        if (check5min(`${title} ${slug}`)) {
+          foundAny = true;
+          const markets = event.markets || [];
+          if (markets.length > 0) {
+            for (const m of markets) {
+              results.appendChild(renderMarket(m, title));
+            }
+          } else {
+            results.appendChild(renderMarket(event, ''));
+          }
+        }
+      }
+
+      if (!foundAny) {
+        // Try series endpoint - 5-min markets are organized as series
+        addLog('Trying series endpoint...');
+        const series = await fetchJSON(`${GAMMA}/series?active=true&limit=20`).catch(e => { addLog(`Series: ${e.message}`); return []; });
+        addLog(`Series returned ${Array.isArray(series) ? series.length : 'non-array'} results`);
+
+        if (Array.isArray(series)) {
+          for (const s of series) {
+            const title = s.title || '';
+            const slug = s.slug || '';
+            addLog(`Series: "${title}" slug="${slug}" pythTokenID="${s.pythTokenID || ''}" TV=${JSON.stringify(s.templateVariables)}`);
+            if (check5min(`${title} ${slug}`) && checkCrypto(`${title} ${slug}`)) {
+              foundAny = true;
+              const card = document.createElement('div');
+              card.className = 'card';
+              card.innerHTML = `<h2>Series: ${title}</h2>
+                <div class="meta">Slug: ${slug}</div>
+                <div class="meta">PythTokenID: ${s.pythTokenID || 'N/A'}</div>
+                <div class="meta">CGAssetName: ${s.cgAssetName || 'N/A'}</div>
+                <div class="raw">${JSON.stringify(s, null, 2)}</div>`;
+              results.appendChild(card);
+
+              // Fetch events for this series
+              const seriesEvents = await fetchJSON(`${GAMMA}/events?active=true&closed=false&seriesSlug=${slug}&limit=5`).catch(e => []);
+              for (const ev of seriesEvents) {
+                addLog(`Series event: "${ev.title}" TV=${JSON.stringify(ev.templateVariables)}`);
+                const markets = ev.markets || [];
+                for (const m of markets) {
+                  results.appendChild(renderMarket(m, ev.title));
+                }
+                if (markets.length === 0) {
+                  results.appendChild(renderMarket(ev, ''));
+                }
+              }
+            }
+          }
+        }
+
+        if (!foundAny) {
+          // Last resort: show recent events for manual inspection
+          setStatus('No 5-min crypto markets currently active. Showing recent events for inspection.');
+          for (const event of broader.slice(0, 5)) {
+            results.appendChild(renderMarket(event, ''));
+          }
+        }
+      }
+    } else {
+      // Display found 5-min markets
+      for (const { market, eventTitle, eventTV } of fiveMinMarkets) {
+        // If market doesn't have TV but event does, copy it
+        if (!market.templateVariables && eventTV) {
+          market.templateVariables = eventTV;
+        }
+        results.appendChild(renderMarket(market, eventTitle));
+      }
+    }
+
+  } catch (err) {
+    setStatus(`Error: ${err.message}`, true);
+    addLog(`FATAL: ${err.stack || err.message}`);
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Refresh';
+}
+
+// Auto-fetch on load
+fetchAll();
+</script>
+</body>
+</html>
