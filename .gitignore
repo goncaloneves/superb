@@ -1,2 +1,6 @@
 node_modules
 yarn.lock
+.bt_cache/
+bt_reports/
+__pycache__/
+*.pyc
